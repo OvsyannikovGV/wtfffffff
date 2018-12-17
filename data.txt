@@ -1,0 +1,4 @@
+Several random strings
+        string no 1
+        String №2
+        sTRING num 3
