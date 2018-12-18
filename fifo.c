@@ -21,7 +21,8 @@
 #define BUFFSIZE 256
 #define TIME_LIMIT 1000
 #define SMALL_TIME 100
-const mode_t CHMOD = S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP | S_IROTH | S_IWOTH;
+#define FIFO_MODE 0644
+char FIFO_NAME[FIFO_NAME_SIZE] = {};
 
 int receiver ();
 int sender (const char* file_name);
@@ -49,6 +50,43 @@ int main (int argc, char* argv[])
 
 int receiver ()
 {
+    pid_t pid = getpid ();
+    my_assert_(snprintf (FIFO_NAME, FIFO_NAME_SIZE, "tempfifo%d", pid) < 0);
+    int check_mkfifo = mkfifo (FIFO_NAME, FIFO_MODE);
+	my_assert_(check_mkfifo == -1 && errno != EEXIST);
+
+    //crit
+    int fifo_fd = open (FIFO_NAME, O_RDONLY | O_NONBLOCK);
+    fcntl(fifo_fd, F_SETFL, O_RDONLY);
+    
+    int pid_fd = -1;
+    int check_mkfifo_pid = mkfifo (PID_FIFO, FIFO_MODE);
+	my_assert_(check_mkfifo_pid == -1 && errno != EEXIST);
+    pid_fd = open (PID_FIFO, O_RDWR);
+	my_assert_(pid_fd == -1);
+    int write_pid = write (pid_fd, &pid, sizeof (pid_t));
+    my_assert_(write_pid != sizeof(pid_t));
+
+    int nread = -1;
+    for( int t = 0; t < TIME_LIMIT; t += SMALL_TIME )
+    {
+        usleep( SMALL_TIME );
+        ioctl(fifo_fd, FIONREAD, &nread );
+        if( nread > 0 )
+            break;
+    }
+    my_assert_(nread <= 0);
+    //end 
+
+    char buf[BUFFSIZE] = {};
+    int it_read = 0;
+    while( (it_read = read(fifo_fd, buf, BUFFSIZE)) > 0 )
+       write( STDOUT_FILENO, buf, it_read );
+
+    unlink(FIFO_NAME);
+    return 0;
+    
+    /*
 	int check_mkfifo_pid = mkfifo (PID_FIFO, CHMOD);
 	my_assert_(check_mkfifo_pid == -1 && errno != EEXIST);
 	
@@ -89,8 +127,9 @@ int receiver ()
     my_assert_(unlink (fifo_name));	
 	
 	return 0;
+    */
 }
-
+/*
 int waiting_sender (const int fd)
 {
 	struct pollfd pfd = {
@@ -106,12 +145,46 @@ int waiting_sender (const int fd)
 	
 	return 0;
 }
-
+*/
 int sender (const char* file_name)
 {
-	int check_mkfifo_pid = mkfifo (PID_FIFO, CHMOD);
+	int src_fd = open( file_name, O_RDONLY );
+    my_assert_(src_fd == -1 );
+
+// crit
+    pid_t pid = -1;
+
+    int pid_fd = -1;
+    int mk_res = mkfifo( PID_FIFO, FIFO_MODE );
+    my_assert_((mk_res != 0) && (errno != EEXIST));
+    pid_fd = open( PID_FIFO, O_RDWR );
+    my_assert_(pid_fd == -1);
+    int res = -1;
+    res = read( pid_fd, &pid, sizeof(pid_t));
+
+    if( (res < sizeof(pid_t)) || (pid < 0) )
+        res = -1;
+    my_assert_(res < 0);
+    
+    my_assert_(snprintf (FIFO_NAME, FIFO_NAME_SIZE, "tempfifo%d", pid) < 0);
+    //printf( "%s\n", DIRECT_FIFO );
+    int fifo_fd = open(FIFO_NAME, O_WRONLY | O_NONBLOCK );
+    my_assert_( fifo_fd == -1 );
+    fcntl( fifo_fd, F_SETFL, O_WRONLY );
+// end crit
+
+    char buf[BUFFSIZE] = {};
+    int it_read = 0;
+    while( (it_read = read( src_fd, buf, BUFFSIZE )) > 0 )
+        write( fifo_fd, buf, it_read );
+
+    close( src_fd );
+    close( fifo_fd );
+    return EXIT_SUCCESS;
+/*
+    int check_mkfifo_pid = mkfifo (PID_FIFO, CHMOD);
 	my_assert_(check_mkfifo_pid == -1 && errno != EEXIST);
-	
+
 	int pid_fd = open (PID_FIFO, O_RDWR);
 	my_assert_(pid_fd == -1);
 	
@@ -145,6 +218,7 @@ int sender (const char* file_name)
 
 	close (fifo_fd);
 	close (streaming_file);
+    */
 
 	return 0;
 }
